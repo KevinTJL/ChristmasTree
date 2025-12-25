@@ -8,7 +8,8 @@ import {
   Float,
   Stars,
   Sparkles,
-  useTexture
+  useTexture,
+  Text
 } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
 import * as THREE from 'three';
@@ -17,7 +18,7 @@ import * as random from 'maath/random';
 import { GestureRecognizer, FilesetResolver, DrawingUtils } from "@mediapipe/tasks-vision";
 
 // --- 动态生成照片列表 (top.jpg + 1.jpg 到 31.jpg) ---
-const TOTAL_NUMBERED_PHOTOS = 31;
+const TOTAL_NUMBERED_PHOTOS = 28;
 // 修改：将 top.jpg 加入到数组开头
 const bodyPhotoPaths = [
   '/photos/top.jpg',
@@ -27,27 +28,27 @@ const bodyPhotoPaths = [
 // --- 视觉配置 ---
 const CONFIG = {
   colors: {
-    emerald: '#004225', // 纯正祖母绿
+    emerald: '#6A0572', // 蓝紫色主体
     gold: '#FFD700',
     silver: '#ECEFF1',
-    red: '#D32F2F',
-    green: '#2E7D32',
+    red: '#E31937',     // 亮红色
+    green: '#C41E3A',   // 深红
     white: '#FFFFFF',   // 纯白色
     warmLight: '#FFD54F',
-    lights: ['#FF0000', '#00FF00', '#0000FF', '#FFFF00'], // 彩灯
-    // 拍立得边框颜色池 (复古柔和色系)
-    borders: ['#FFFAF0', '#F0E68C', '#E6E6FA', '#FFB6C1', '#98FB98', '#87CEFA', '#FFDAB9'],
-    // 圣诞元素颜色
-    giftColors: ['#D32F2F', '#FFD700', '#1976D2', '#2E7D32'],
+    lights: ['#FF0000', '#9D4EDD', '#3A0CA3', '#E31937'], // 彩灯 - 红色和紫色
+    // 拍立得边框颜色池 (红色和紫色系)
+    borders: ['#FFE5E5', '#F3E5F5', '#E8D7F1', '#FFB3BA', '#D4A5FF', '#E0B3FF', '#FFCCCC'],
+    // 圣诞元素颜色 - 红色和紫色
+    giftColors: ['#E31937', '#FFD700', '#9D4EDD', '#C41E3A'],
     candyColors: ['#FF0000', '#FFFFFF']
   },
   counts: {
-    foliage: 15000,
-    ornaments: 300,   // 拍立得照片数量
-    elements: 200,    // 圣诞元素数量
+    foliage: 20000,
+    ornaments: 58,   // 拍立得照片数量
+    elements: 1200,    // 圣诞元素数量（增加数量以维持体积密度）
     lights: 400       // 彩灯数量
   },
-  tree: { height: 22, radius: 9 }, // 树体尺寸
+  tree: { height: 28, radius: 11 }, // 放大树体尺寸
   photos: {
     // top 属性不再需要，因为已经移入 body
     body: bodyPhotoPaths
@@ -79,6 +80,60 @@ const FoliageMaterial = shaderMaterial(
 );
 extend({ FoliageMaterial });
 
+// --- Component: Snow Field ---
+const Snow = () => {
+  const count = 1800;
+  const { positions, speeds } = useMemo(() => {
+    const positions = new Float32Array(count * 3);
+    const speeds = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * 160;      // x
+      positions[i * 3 + 1] = Math.random() * 90;           // y
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 160;  // z
+      speeds[i] = 0.6 + Math.random() * 0.9; // 下落速度
+    }
+    return { positions, speeds };
+  }, []);
+
+  const positionsRef = useRef<THREE.BufferAttribute>(null);
+
+  useFrame((_, delta) => {
+    const attr = positionsRef.current;
+    if (!attr) return;
+    const arr = attr.array as Float32Array;
+    for (let i = 0; i < count; i++) {
+      const idx = i * 3 + 1; // y 分量
+      arr[idx] -= speeds[i] * delta * 10;
+      if (arr[idx] < -20) {
+        arr[idx] = 90;
+        arr[idx - 1] = (Math.random() - 0.5) * 160; // 重新随机 x
+        arr[idx + 1] = (Math.random() - 0.5) * 160; // 重新随机 z
+      }
+    }
+    attr.needsUpdate = true;
+  });
+
+  return (
+    <points>
+      <bufferGeometry>
+        <bufferAttribute
+          ref={positionsRef}
+          attach="attributes-position"
+          args={[positions, 3]}
+        />
+      </bufferGeometry>
+      <pointsMaterial
+        color={CONFIG.colors.white}
+        size={0.6}
+        sizeAttenuation
+        transparent
+        opacity={0.8}
+        depthWrite={false}
+      />
+    </points>
+  );
+};
+
 // --- Helper: Tree Shape ---
 const getTreePosition = () => {
   const h = CONFIG.tree.height; const rBase = CONFIG.tree.radius;
@@ -89,8 +144,9 @@ const getTreePosition = () => {
 };
 
 // --- Component: Foliage ---
-const Foliage = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
+const Foliage = ({ state, color }: { state: 'CHAOS' | 'FORMED', color: string }) => {
   const materialRef = useRef<any>(null);
+  const groupRef = useRef<THREE.Group>(null);
   const { positions, targetPositions, randoms } = useMemo(() => {
     const count = CONFIG.counts.foliage;
     const positions = new Float32Array(count * 3); const targetPositions = new Float32Array(count * 3); const randoms = new Float32Array(count);
@@ -106,43 +162,57 @@ const Foliage = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
   useFrame((rootState, delta) => {
     if (materialRef.current) {
       materialRef.current.uTime = rootState.clock.elapsedTime;
+      materialRef.current.uColor = new THREE.Color(color);
       const targetProgress = state === 'FORMED' ? 1 : 0;
       materialRef.current.uProgress = MathUtils.damp(materialRef.current.uProgress, targetProgress, 1.5, delta);
     }
+    if (groupRef.current && state === 'CHAOS') {
+      groupRef.current.rotation.y += delta * 0.4; // 混沌态缓慢自旋
+    }
   });
   return (
-    <points>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
-        <bufferAttribute attach="attributes-aTargetPos" args={[targetPositions, 3]} />
-        <bufferAttribute attach="attributes-aRandom" args={[randoms, 1]} />
-      </bufferGeometry>
-      {/* @ts-ignore */}
-      <foliageMaterial ref={materialRef} transparent depthWrite={false} blending={THREE.AdditiveBlending} />
-    </points>
+    <group ref={groupRef}>
+      <points>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+          <bufferAttribute attach="attributes-aTargetPos" args={[targetPositions, 3]} />
+          <bufferAttribute attach="attributes-aRandom" args={[randoms, 1]} />
+        </bufferGeometry>
+        {/* @ts-ignore */}
+        <foliageMaterial ref={materialRef} transparent depthWrite={false} blending={THREE.AdditiveBlending} />
+      </points>
+    </group>
   );
 };
 
 // --- Component: Photo Ornaments (Double-Sided Polaroid) ---
-const PhotoOrnaments = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
+const PhotoOrnaments = ({ state, zoomActive, zoomIndex, zoomDir }: { state: 'CHAOS' | 'FORMED', zoomActive: boolean, zoomIndex: number, zoomDir: 'left' | 'right' | 'up' | 'down' | null }) => {
   const textures = useTexture(CONFIG.photos.body);
   const count = CONFIG.counts.ornaments;
   const groupRef = useRef<THREE.Group>(null);
 
-  const borderGeometry = useMemo(() => new THREE.PlaneGeometry(1.2, 1.5), []);
-  const photoGeometry = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
+  const borderGeometry = useMemo(() => new THREE.PlaneGeometry(0.9, 1.1), []);
+  const photoGeometry = useMemo(() => new THREE.PlaneGeometry(0.75, 0.75), []);
 
   const data = useMemo(() => {
     return new Array(count).fill(0).map((_, i) => {
       const chaosPos = new THREE.Vector3((Math.random()-0.5)*70, (Math.random()-0.5)*70, (Math.random()-0.5)*70);
-      const h = CONFIG.tree.height; const y = (Math.random() * h) - (h / 2);
+      const h = CONFIG.tree.height;
+      const yFrac = Math.pow(Math.random(), 1.6) * 0.7; // 底部密集，顶部稀疏，并限制最高 70% 高度
+      const y = yFrac * h - (h / 2);
       const rBase = CONFIG.tree.radius;
       const currentRadius = (rBase * (1 - (y + (h/2)) / h)) + 0.5;
       const theta = Math.random() * Math.PI * 2;
       const targetPos = new THREE.Vector3(currentRadius * Math.cos(theta), y, currentRadius * Math.sin(theta));
+      // 将照片从树体表面外移，呈悬挂/垂直插入状态
+      const dir = new THREE.Vector3(targetPos.x, 0, targetPos.z);
+      if (dir.lengthSq() < 1e-4) dir.set(1, 0, 0);
+      dir.normalize();
+      targetPos.addScaledVector(dir, 0.8);
+      targetPos.y -= 0.3;
 
       const isBig = Math.random() < 0.2;
-      const baseScale = isBig ? 2.2 : 0.8 + Math.random() * 0.6;
+      const baseScale = isBig ? 1.5 : 0.55 + Math.random() * 0.35;
       const weight = 0.8 + Math.random() * 1.2;
       const borderColor = CONFIG.colors.borders[Math.floor(Math.random() * CONFIG.colors.borders.length)];
 
@@ -171,9 +241,22 @@ const PhotoOrnaments = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
     const isFormed = state === 'FORMED';
     const time = stateObj.clock.elapsedTime;
 
+    if (!isFormed) {
+      groupRef.current.rotation.y += delta * 0.25; // 混沌态整体旋转
+    }
+
     groupRef.current.children.forEach((group, i) => {
       const objData = data[i];
-      const target = isFormed ? objData.targetPos : objData.chaosPos;
+      let target = isFormed ? objData.targetPos : objData.chaosPos;
+      if (zoomActive && i === zoomIndex) {
+        const front = new THREE.Vector3(0, CONFIG.tree.height * 0.05, 14);
+        const offset = new THREE.Vector3(
+          zoomDir === 'left' ? -6 : zoomDir === 'right' ? 6 : 0,
+          zoomDir === 'up' ? 5 : zoomDir === 'down' ? -2 : 0,
+          0
+        );
+        target = front.add(offset);
+      }
 
       objData.currentPos.lerp(target, delta * (isFormed ? 0.8 * objData.weight : 0.5));
       group.position.copy(objData.currentPos);
@@ -212,6 +295,9 @@ const PhotoOrnaments = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
             <mesh geometry={borderGeometry} position={[0, -0.15, -0.01]}>
               <meshStandardMaterial color={obj.borderColor} roughness={0.9} metalness={0} side={THREE.FrontSide} />
             </mesh>
+            {zoomActive && i === 0 && (
+              <Sparkles count={50} speed={1.8} scale={4} size={7} color={CONFIG.colors.gold} opacity={0.8} />
+            )}
           </group>
           {/* 背面 */}
           <group position={[0, 0, -0.015]} rotation={[0, Math.PI, 0]}>
@@ -234,13 +320,11 @@ const PhotoOrnaments = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
 };
 
 // --- Component: Christmas Elements ---
-const ChristmasElements = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
+const ChristmasElements = ({ state, color, zoomActive }: { state: 'CHAOS' | 'FORMED', color: string, zoomActive: boolean }) => {
   const count = CONFIG.counts.elements;
   const groupRef = useRef<THREE.Group>(null);
 
-  const boxGeometry = useMemo(() => new THREE.BoxGeometry(0.8, 0.8, 0.8), []);
-  const sphereGeometry = useMemo(() => new THREE.SphereGeometry(0.5, 16, 16), []);
-  const caneGeometry = useMemo(() => new THREE.CylinderGeometry(0.15, 0.15, 1.2, 8), []);
+  const boxGeometry = useMemo(() => new THREE.BoxGeometry(0.5, 0.5, 0.5), []);
 
   const data = useMemo(() => {
     return new Array(count).fill(0).map(() => {
@@ -253,24 +337,25 @@ const ChristmasElements = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
 
       const targetPos = new THREE.Vector3(currentRadius * Math.cos(theta), y, currentRadius * Math.sin(theta));
 
-      const type = Math.floor(Math.random() * 3);
-      let color; let scale = 1;
-      if (type === 0) { color = CONFIG.colors.giftColors[Math.floor(Math.random() * CONFIG.colors.giftColors.length)]; scale = 0.8 + Math.random() * 0.4; }
-      else if (type === 1) { color = CONFIG.colors.giftColors[Math.floor(Math.random() * CONFIG.colors.giftColors.length)]; scale = 0.6 + Math.random() * 0.4; }
-      else { color = Math.random() > 0.5 ? CONFIG.colors.red : CONFIG.colors.white; scale = 0.7 + Math.random() * 0.3; }
-
+      const scale = 0.55 + Math.random() * 0.25; // 更小的方块
       const rotationSpeed = { x: (Math.random()-0.5)*2.0, y: (Math.random()-0.5)*2.0, z: (Math.random()-0.5)*2.0 };
-      return { type, chaosPos, targetPos, color, scale, currentPos: chaosPos.clone(), chaosRotation: new THREE.Euler(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI), rotationSpeed };
+      return { chaosPos, targetPos, scale, currentPos: chaosPos.clone(), chaosRotation: new THREE.Euler(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI), rotationSpeed };
     });
-  }, [boxGeometry, sphereGeometry, caneGeometry]);
+  }, [boxGeometry]);
 
   useFrame((_, delta) => {
     if (!groupRef.current) return;
     const isFormed = state === 'FORMED';
+    if (!isFormed) {
+      groupRef.current.rotation.y += delta * 0.25; // 混沌态整体自转，方块随动
+    }
     groupRef.current.children.forEach((child, i) => {
       const mesh = child as THREE.Mesh;
       const objData = data[i];
-      const target = isFormed ? objData.targetPos : objData.chaosPos;
+      let target = isFormed ? objData.targetPos : objData.chaosPos;
+      if (zoomActive && i < 5) {
+        target = objData.chaosPos.clone().multiplyScalar(0.7); // 轻微收拢以配合近景
+      }
       objData.currentPos.lerp(target, delta * 1.5);
       mesh.position.copy(objData.currentPos);
       mesh.rotation.x += delta * objData.rotationSpeed.x; mesh.rotation.y += delta * objData.rotationSpeed.y; mesh.rotation.z += delta * objData.rotationSpeed.z;
@@ -279,11 +364,11 @@ const ChristmasElements = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
 
   return (
     <group ref={groupRef}>
-      {data.map((obj, i) => {
-        let geometry; if (obj.type === 0) geometry = boxGeometry; else if (obj.type === 1) geometry = sphereGeometry; else geometry = caneGeometry;
-        return ( <mesh key={i} scale={[obj.scale, obj.scale, obj.scale]} geometry={geometry} rotation={obj.chaosRotation}>
-          <meshStandardMaterial color={obj.color} roughness={0.3} metalness={0.4} emissive={obj.color} emissiveIntensity={0.2} />
-        </mesh> )})}
+      {data.map((obj, i) => (
+        <mesh key={i} scale={[obj.scale, obj.scale, obj.scale]} geometry={boxGeometry} rotation={obj.chaosRotation}>
+          <meshStandardMaterial color={color} roughness={0.3} metalness={0.4} emissive={color} emissiveIntensity={0.25} />
+        </mesh>
+      ))}
     </group>
   );
 };
@@ -380,53 +465,87 @@ const TopStar = ({ state }: { state: 'CHAOS' | 'FORMED' }) => {
 };
 
 // --- Main Scene Experience ---
-const Experience = ({ sceneState, rotationSpeed }: { sceneState: 'CHAOS' | 'FORMED', rotationSpeed: number }) => {
+const Experience = ({ sceneState, rotationSpeed, activeColor, zoomActive, zoomIndex, zoomDir, ctxLost }: { sceneState: 'CHAOS' | 'FORMED', rotationSpeed: number, activeColor: string, zoomActive: boolean, zoomIndex: number, zoomDir: 'left' | 'right' | 'up' | 'down' | null, ctxLost: boolean }) => {
   const controlsRef = useRef<any>(null);
-  useFrame(() => {
+  const sceneGroupRef = useRef<THREE.Group>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera>(null);
+
+  useFrame((_, delta) => {
     if (controlsRef.current) {
       controlsRef.current.setAzimuthalAngle(controlsRef.current.getAzimuthalAngle() + rotationSpeed);
       controlsRef.current.update();
+    }
+    // 树体在聚合时缓慢自旋
+    if (sceneGroupRef.current && sceneState === 'FORMED') {
+      sceneGroupRef.current.rotation.y += delta * (rotationSpeed !== 0 ? rotationSpeed * 8 : 0.12);
+    }
+    // 视角随聚散自动远近，便于看清散开的照片
+    if (cameraRef.current) {
+      const targetZ = sceneState === 'CHAOS' ? 32 : 72; // CHAOS 更近景
+      const targetY = sceneState === 'CHAOS' ? 6 : 10;
+      if (sceneState === 'CHAOS') {
+        cameraRef.current.position.z = targetZ;
+        cameraRef.current.position.y = targetY;
+      } else {
+        cameraRef.current.position.z = MathUtils.damp(cameraRef.current.position.z, targetZ, 2.5, delta);
+        cameraRef.current.position.y = MathUtils.damp(cameraRef.current.position.y, targetY, 2.5, delta);
+      }
     }
   });
 
   return (
     <>
-      <PerspectiveCamera makeDefault position={[0, 8, 60]} fov={45} />
+      <PerspectiveCamera ref={cameraRef} makeDefault position={[0, 10, 72]} fov={45} />
       <OrbitControls ref={controlsRef} enablePan={false} enableZoom={true} minDistance={30} maxDistance={120} autoRotate={rotationSpeed === 0 && sceneState === 'FORMED'} autoRotateSpeed={0.3} maxPolarAngle={Math.PI / 1.7} />
 
       <color attach="background" args={['#000300']} />
-      <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
+      <Stars radius={120} depth={60} count={5000} factor={4} saturation={0} fade speed={1} />
+      <Snow />
       <Environment preset="night" background={false} />
 
-      <ambientLight intensity={0.4} color="#003311" />
-      <pointLight position={[30, 30, 30]} intensity={100} color={CONFIG.colors.warmLight} />
-      <pointLight position={[-30, 10, -30]} intensity={50} color={CONFIG.colors.gold} />
+      <ambientLight intensity={0.4} color="#330011" />
+      <pointLight position={[30, 30, 30]} intensity={100} color="#E31937" />
+      <pointLight position={[-30, 10, -30]} intensity={50} color="#9D4EDD" />
       <pointLight position={[0, -20, 10]} intensity={30} color="#ffffff" />
 
-      <group position={[0, -6, 0]}>
-        <Foliage state={sceneState} />
+      <group ref={sceneGroupRef} position={[0, -7, 0]}>
+        <Foliage state={sceneState} color={activeColor} />
         <Suspense fallback={null}>
-           <PhotoOrnaments state={sceneState} />
-           <ChristmasElements state={sceneState} />
+           <PhotoOrnaments state={sceneState} zoomActive={zoomActive} zoomIndex={zoomIndex} zoomDir={zoomDir} />
+           <ChristmasElements state={sceneState} color={activeColor} zoomActive={zoomActive} />
            <FairyLights state={sceneState} />
            <TopStar state={sceneState} />
         </Suspense>
         <Sparkles count={600} scale={50} size={8} speed={0.4} opacity={0.4} color={CONFIG.colors.silver} />
+        <Text
+          position={[0, CONFIG.tree.height / 2 + 6, 0]}
+          fontSize={3}
+          color={activeColor}
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.08}
+          outlineColor="#000000"
+        >
+          MERRY CHRISTMAS
+        </Text>
       </group>
 
-      <EffectComposer>
-        <Bloom luminanceThreshold={0.8} luminanceSmoothing={0.1} intensity={1.5} radius={0.5} mipmapBlur />
-        <Vignette eskil={false} offset={0.1} darkness={1.2} />
-      </EffectComposer>
+      {!ctxLost && (
+        <EffectComposer multisampling={0}>
+          <Bloom luminanceThreshold={0.8} luminanceSmoothing={0.1} intensity={1.5} radius={0.5} mipmapBlur />
+          <Vignette eskil={false} offset={0.1} darkness={1.2} />
+        </EffectComposer>
+      )}
     </>
   );
 };
 
 // --- Gesture Controller ---
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const GestureController = ({ onGesture, onMove, onStatus, debugMode }: any) => {
+const GestureController = ({ onGesture, onMove, onStatus, onColorCycle, onPhotoZoom, debugMode }: any) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const lastColorRef = useRef(0);
 
   useEffect(() => {
     let gestureRecognizer: GestureRecognizer;
@@ -476,15 +595,39 @@ const GestureController = ({ onGesture, onMove, onStatus, debugMode }: any) => {
                 }
             } else if (ctx && !debugMode) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
-            if (results.gestures.length > 0) {
+              if (results.gestures.length > 0) {
               const name = results.gestures[0][0].categoryName; const score = results.gestures[0][0].score;
-              if (score > 0.4) {
-                 if (name === "Open_Palm") onGesture("CHAOS"); if (name === "Closed_Fist") onGesture("FORMED");
-                 if (debugMode) onStatus(`DETECTED: ${name}`);
-              }
+                if (score > 0.4) {
+                  if (name === "Open_Palm") onGesture("CHAOS");
+                  if (name === "Closed_Fist") onGesture("FORMED");
+                  if (name === "Victory" || name === "Peace" || name === "V_Sign") {
+                    const now = performance.now();
+                    if (now - lastColorRef.current > 800) {
+                     onColorCycle();
+                     lastColorRef.current = now;
+                    }
+                  }
+                  if (debugMode) onStatus(`DETECTED: ${name}`);
+                }
               if (results.landmarks.length > 0) {
-                const speed = (0.5 - results.landmarks[0][0].x) * 0.15;
+                const lm = results.landmarks[0];
+                const speed = (0.5 - lm[0].x) * 0.15;
                 onMove(Math.abs(speed) > 0.01 ? speed : 0);
+
+                // 手指捏住：大拇指与食指距离
+                const pinchDist = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y, lm[4].z - lm[8].z);
+                const pinch = pinchDist < 0.05;
+
+                let dir: 'left' | 'right' | 'up' | 'down' | null = null;
+                const dx = lm[8].x - lm[4].x;
+                const dy = lm[8].y - lm[4].y;
+                if (Math.abs(dx) > Math.abs(dy)) {
+                  dir = dx > 0 ? 'right' : 'left';
+                } else {
+                  dir = dy > 0 ? 'down' : 'up';
+                }
+
+                onPhotoZoom(pinch, pinch ? dir : null);
               }
             } else { onMove(0); if (debugMode) onStatus("AI READY: NO HAND"); }
         }
@@ -493,7 +636,7 @@ const GestureController = ({ onGesture, onMove, onStatus, debugMode }: any) => {
     };
     setup();
     return () => cancelAnimationFrame(requestRef);
-  }, [onGesture, onMove, onStatus, debugMode]);
+  }, [onGesture, onMove, onStatus, onColorCycle, onPhotoZoom, debugMode]);
 
   return (
     <>
@@ -505,19 +648,69 @@ const GestureController = ({ onGesture, onMove, onStatus, debugMode }: any) => {
 
 // --- App Entry ---
 export default function GrandTreeApp() {
-  const [sceneState, setSceneState] = useState<'CHAOS' | 'FORMED'>('CHAOS');
+  const [sceneState, setSceneState] = useState<'CHAOS' | 'FORMED'>('FORMED');
   const [rotationSpeed, setRotationSpeed] = useState(0);
   const [aiStatus, setAiStatus] = useState("INITIALIZING...");
   const [debugMode, setDebugMode] = useState(false);
+  const [ctxLost, setCtxLost] = useState(false);
+  const mainColors = ['#E31937', '#1E88E5', '#F06292', '#2E7D32', '#FFFFFF'];
+  const [colorIndex, setColorIndex] = useState(0);
+  const activeColor = mainColors[colorIndex];
+  const [photoZoom, setPhotoZoom] = useState(false);
+  const [photoZoomDir, setPhotoZoomDir] = useState<'left' | 'right' | 'up' | 'down' | null>(null);
+  const [photoZoomIndex, setPhotoZoomIndex] = useState(0);
+
+  const handleCycleColor = () => setColorIndex((i) => (i + 1) % mainColors.length);
+
+  const dirToIndex = (dir: 'left' | 'right' | 'up' | 'down' | null) => {
+    if (dir === 'left') return 1;
+    if (dir === 'right') return 0;
+    if (dir === 'up') return 2;
+    if (dir === 'down') return 3;
+    return 0;
+  };
+
+  const handlePhotoZoom = (active: boolean, dir: 'left' | 'right' | 'up' | 'down' | null) => {
+    setPhotoZoom(active);
+    if (active && dir) {
+      setPhotoZoomDir(dir);
+      setPhotoZoomIndex(dirToIndex(dir));
+    } else if (!active) {
+      setPhotoZoomDir(null);
+    }
+  };
 
   return (
     <div style={{ width: '100vw', height: '100vh', backgroundColor: '#000', position: 'relative', overflow: 'hidden' }}>
       <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, zIndex: 1 }}>
-        <Canvas dpr={[1, 2]} gl={{ toneMapping: THREE.ReinhardToneMapping }} shadows>
-            <Experience sceneState={sceneState} rotationSpeed={rotationSpeed} />
+        <Canvas
+          dpr={[1, 1.5]}
+          gl={{
+            toneMapping: THREE.ReinhardToneMapping,
+            antialias: true,
+            powerPreference: 'high-performance',
+            stencil: false,
+            depth: true,
+            preserveDrawingBuffer: false,
+          }}
+          shadows
+          onCreated={({ gl }) => {
+            const canvas = gl.getContext().canvas;
+            const handleLoss = (e: Event) => {
+              e.preventDefault();
+              setCtxLost(true);
+            };
+            const handleRestore = () => {
+              setCtxLost(false);
+            };
+            canvas.addEventListener('webglcontextlost', handleLoss, false);
+            canvas.addEventListener('webglcontextrestored', handleRestore, false);
+          }}
+        >
+            <Experience sceneState={sceneState} rotationSpeed={rotationSpeed} activeColor={activeColor} zoomActive={photoZoom} zoomIndex={photoZoomIndex} zoomDir={photoZoomDir} ctxLost={ctxLost} />
         </Canvas>
       </div>
-      <GestureController onGesture={setSceneState} onMove={setRotationSpeed} onStatus={setAiStatus} debugMode={debugMode} />
+      <GestureController onGesture={setSceneState} onMove={setRotationSpeed} onStatus={setAiStatus} onColorCycle={handleCycleColor} onPhotoZoom={handlePhotoZoom} debugMode={debugMode} />
 
       {/* UI - Stats */}
       <div style={{ position: 'absolute', bottom: '30px', left: '40px', color: '#888', zIndex: 10, fontFamily: 'sans-serif', userSelect: 'none' }}>
@@ -529,8 +722,8 @@ export default function GrandTreeApp() {
         </div>
         <div>
           <p style={{ fontSize: '10px', letterSpacing: '2px', textTransform: 'uppercase', marginBottom: '4px' }}>Foliage</p>
-          <p style={{ fontSize: '24px', color: '#004225', fontWeight: 'bold', margin: 0 }}>
-            {(CONFIG.counts.foliage / 1000).toFixed(0)}K <span style={{ fontSize: '10px', color: '#555', fontWeight: 'normal' }}>EMERALD NEEDLES</span>
+          <p style={{ fontSize: '24px', color: '#9D4EDD', fontWeight: 'bold', margin: 0 }}>
+            {(CONFIG.counts.foliage / 1000).toFixed(0)}K <span style={{ fontSize: '10px', color: '#555', fontWeight: 'normal' }}>PURPLE NEEDLES</span>
           </p>
         </div>
       </div>
