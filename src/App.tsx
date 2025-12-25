@@ -43,10 +43,10 @@ const CONFIG = {
     candyColors: ['#FF0000', '#FFFFFF']
   },
   counts: {
-    foliage: 20000,
+    foliage: 8000,
     ornaments: 58,   // 拍立得照片数量
-    elements: 1200,    // 圣诞元素数量（增加数量以维持体积密度）
-    lights: 400       // 彩灯数量
+    elements: 300,
+    lights: 150       // 彩灯数量
   },
   tree: { height: 28, radius: 11 }, // 放大树体尺寸
   photos: {
@@ -82,7 +82,7 @@ extend({ FoliageMaterial });
 
 // --- Component: Snow Field ---
 const Snow = () => {
-  const count = 1800;
+  const count = 500;
   const { positions, speeds } = useMemo(() => {
     const positions = new Float32Array(count * 3);
     const speeds = new Float32Array(count);
@@ -295,9 +295,9 @@ const PhotoOrnaments = ({ state, zoomActive, zoomIndex, zoomDir }: { state: 'CHA
             <mesh geometry={borderGeometry} position={[0, -0.15, -0.01]}>
               <meshStandardMaterial color={obj.borderColor} roughness={0.9} metalness={0} side={THREE.FrontSide} />
             </mesh>
-            {zoomActive && i === 0 && (
-              <Sparkles count={50} speed={1.8} scale={4} size={7} color={CONFIG.colors.gold} opacity={0.8} />
-            )}
+              {zoomActive && i === 0 && (
+                <Sparkles count={12} speed={1.3} scale={2.8} size={5} color={CONFIG.colors.gold} opacity={0.6} />
+              )}
           </group>
           {/* 背面 */}
           <group position={[0, 0, -0.015]} rotation={[0, Math.PI, 0]}>
@@ -499,7 +499,7 @@ const Experience = ({ sceneState, rotationSpeed, activeColor, zoomActive, zoomIn
       <OrbitControls ref={controlsRef} enablePan={false} enableZoom={true} minDistance={30} maxDistance={120} autoRotate={rotationSpeed === 0 && sceneState === 'FORMED'} autoRotateSpeed={0.3} maxPolarAngle={Math.PI / 1.7} />
 
       <color attach="background" args={['#000300']} />
-      <Stars radius={120} depth={60} count={5000} factor={4} saturation={0} fade speed={1} />
+      <Stars radius={100} depth={50} count={1000} factor={2} saturation={0} fade speed={1} />
       <Snow />
       <Environment preset="night" background={false} />
 
@@ -516,7 +516,7 @@ const Experience = ({ sceneState, rotationSpeed, activeColor, zoomActive, zoomIn
            <FairyLights state={sceneState} />
            <TopStar state={sceneState} />
         </Suspense>
-        <Sparkles count={600} scale={50} size={8} speed={0.4} opacity={0.4} color={CONFIG.colors.silver} />
+        <Sparkles count={150} scale={40} size={5} speed={0.3} opacity={0.3} color={CONFIG.colors.silver} />
         <Text
           position={[0, CONFIG.tree.height / 2 + 6, 0]}
           fontSize={3}
@@ -530,12 +530,7 @@ const Experience = ({ sceneState, rotationSpeed, activeColor, zoomActive, zoomIn
         </Text>
       </group>
 
-      {!ctxLost && (
-        <EffectComposer multisampling={0}>
-          <Bloom luminanceThreshold={0.8} luminanceSmoothing={0.1} intensity={1.5} radius={0.5} mipmapBlur />
-          <Vignette eskil={false} offset={0.1} darkness={1.2} />
-        </EffectComposer>
-      )}
+      {/* 移除后处理以减轻 GPU 负载 */}
     </>
   );
 };
@@ -684,16 +679,15 @@ export default function GrandTreeApp() {
     <div style={{ width: '100vw', height: '100vh', backgroundColor: '#000', position: 'relative', overflow: 'hidden' }}>
       <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, zIndex: 1 }}>
         <Canvas
-          dpr={[1, 1.5]}
+          dpr={[1, 1.1]}
           gl={{
             toneMapping: THREE.ReinhardToneMapping,
-            antialias: true,
+            antialias: false,
             powerPreference: 'high-performance',
             stencil: false,
             depth: true,
             preserveDrawingBuffer: false,
           }}
-          shadows
           onCreated={({ gl }) => {
             const canvas = gl.getContext().canvas;
             const handleLoss = (e: Event) => {
